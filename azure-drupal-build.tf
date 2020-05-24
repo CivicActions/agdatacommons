@@ -124,8 +124,7 @@ resource "azurerm_application_gateway" "network" {
   backend_address_pool {
     name = local.backend_address_pool_name
     #fqdns = [azurerm_container_group.usda-d7-prod-container-group-1.fqdn]
-    #ip_addresses = [azurerm_container_group.usda-d7-prod-container-group-1.ip_address]
-    ip_addresses = ["10.0.1.4"]
+    ip_addresses = ["${azurerm_container_group.usda-d7-prod-container-group-1.ip_address}"]
   }
 
   backend_http_settings {
@@ -133,7 +132,7 @@ resource "azurerm_application_gateway" "network" {
     cookie_based_affinity = "Disabled"
     port                  = 80
     protocol              = "Http"
-    request_timeout       = 1
+    request_timeout       = 20
   }
 
   backend_http_settings {
@@ -141,7 +140,7 @@ resource "azurerm_application_gateway" "network" {
     cookie_based_affinity = "Disabled"
     port                  = 8983
     protocol              = "Http"
-    request_timeout       = 1
+    request_timeout       = 20
   }
 
   http_listener {
