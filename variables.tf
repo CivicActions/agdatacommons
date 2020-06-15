@@ -35,5 +35,5 @@ variable "db_admin_password" {
 
 variable "resource_group_name" {
     type = string
-    default = "usda-drupal7-rg"
+    default = "nal-adc-prod-rg"
 }
