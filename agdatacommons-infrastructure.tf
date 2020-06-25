@@ -42,6 +42,7 @@ resource "azurerm_virtual_network" "nal-adc-prod-vnet" {
   resource_group_name = var.resource_group_name
   location            = var.location
   address_space       = ["10.0.0.0/16"]
+  depends_on          = [azurerm_resource_group.nal-adc-prod-rg]
 }
 
 # Private subnet for the container groups.  This subnet has no external
@@ -76,18 +77,20 @@ resource "azurerm_public_ip" "nal-adc-public-ip" {
   resource_group_name = var.resource_group_name
   allocation_method   = "Static"
   sku                 = "Standard"
+  depends_on          = [azurerm_resource_group.nal-adc-prod-rg]
 }
 
 locals {
   resource_group_name            = "${azurerm_resource_group.nal-adc-prod-rg.name}"
   resource_group_location        = "${azurerm_resource_group.nal-adc-prod-rg.location}"
-  backend_address_pool_name      = "azurerm_virtual_network.nal-adc-prod-vnet.name-beap"
+  backend_address_pool_web_name  = "azurerm_virtual_network.nal-adc-prod-vnet.name-web-beap"
+  backend_address_pool_solr_name = "azurerm_virtual_network.nal-adc-prod-vnet.name-solr-beap"
   frontend_port_name             = "azurerm_virtual_network.nal-adc-prod-vnet.name-feport"
   frontend_ip_configuration_name = "azurerm_virtual_network.nal-adc-prod-vnet.name-feip"
   http_setting_name              = "azurerm_virtual_network.nal-adc-prod-vnet.name-be-htst"
   listener_name_http             = "azurerm_virtual_network.nal-adc-prod-vnet.name-httplstn"
   listener_name_solr             = "azurerm_virtual_network.nal-adc-prod-vnet.name-solrlstn"
-  request_routing_rule_name      = "azurerm_virtual_network.nal-adc-prod-vnet.name-rqrt"
+  request_routing_rule_name_web  = "azurerm_virtual_network.nal-adc-prod-vnet.name-rqrt-web"
   request_routing_rule_name_solr = "azurerm_virtual_network.nal-adc-prod-vnet.name-rqrt-solr"
   redirect_configuration_name    = "azurerm_virtual_network.nal-adc-prod-vnet.name-rdrcfg"
 }
@@ -127,10 +130,13 @@ resource "azurerm_application_gateway" "network" {
   }
 
   backend_address_pool {
-    name = local.backend_address_pool_name
-    #fqdns = [azurerm_container_group.nal-adc-prod-container-group-1.fqdn]
-    #ip_addresses = [azurerm_container_group.nal-adc-prod-container-group-1.ip_address]
+    name = local.backend_address_pool_web_name
     ip_addresses = ["${azurerm_container_group.nal-adc-prod-container-group-1.ip_address}"]
+  }
+
+  backend_address_pool {
+    name = local.backend_address_pool_solr_name
+    ip_addresses = ["${azurerm_container_group.nal-adc-prod-container-group-2.ip_address}"]
   }
 
   backend_http_settings {
@@ -164,10 +170,10 @@ resource "azurerm_application_gateway" "network" {
   }
 
   request_routing_rule {
-    name                       = local.request_routing_rule_name
+    name                       = local.request_routing_rule_name_web
     rule_type                  = "Basic"
     http_listener_name         = local.listener_name_http
-    backend_address_pool_name  = local.backend_address_pool_name
+    backend_address_pool_name  = local.backend_address_pool_web_name
     backend_http_settings_name = local.http_setting_name
   }
 
@@ -175,7 +181,7 @@ resource "azurerm_application_gateway" "network" {
     name                       = local.request_routing_rule_name_solr
     rule_type                  = "Basic"
     http_listener_name         = local.listener_name_solr
-    backend_address_pool_name  = local.backend_address_pool_name
+    backend_address_pool_name  = local.backend_address_pool_solr_name
     backend_http_settings_name = "solr"
   }
 }
@@ -201,30 +207,31 @@ resource "azurerm_network_security_group" "nal-adc-prod-nsg" {
   name                = "production-nsg"
   resource_group_name = var.resource_group_name
   location            = var.location
+  depends_on          = [azurerm_resource_group.nal-adc-prod-rg]
 }
 
 # Other (cheaper) storage options exist, but performance suffers.
-# Remove the "alt" before releasing.
 # Share names must be unique even when under different storage accounts.
 resource "azurerm_storage_account" "naladcstorage" {
   name                     = "naladcstorage"
   resource_group_name = var.resource_group_name
   location            = var.location
-  account_tier             = "Premium"
-  account_replication_type = "ZRS"
-  account_kind             = "FileStorage"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+  depends_on          = [azurerm_resource_group.nal-adc-prod-rg]
 }
 
 resource "azurerm_storage_share" "naladc-uploads-production" {
   name                 = "productionuploads"
   storage_account_name = azurerm_storage_account.naladcstorage.name
-  quota                = 100
+  quota                = 500
 }
 
 resource "azurerm_storage_share" "naladc-db-backup-production" {
   name                 = "productiondb"
   storage_account_name = azurerm_storage_account.naladcstorage.name
-  quota                = 100
+  quota                = 500
 }
 
 resource "azurerm_mariadb_server" "nal-adc-prod-dbserver" {
@@ -244,6 +251,7 @@ resource "azurerm_mariadb_server" "nal-adc-prod-dbserver" {
   administrator_login_password = "Admin!23"
   version                      = "10.2"
   ssl_enforcement              = "Disabled"
+  depends_on          = [azurerm_resource_group.nal-adc-prod-rg]
 }
 
 resource "azurerm_mariadb_database" "nal-adc-prod-database" {
@@ -319,6 +327,19 @@ resource "azurerm_container_group" "nal-adc-prod-container-group-1" {
       storage_account_key  = azurerm_storage_account.naladcstorage.primary_access_key
     }
   }
+
+  tags = {
+    environment = "production"
+  }
+}
+
+resource "azurerm_container_group" "nal-adc-prod-container-group-2" {
+  name                = "nal-adc-prod-container_group-2"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  ip_address_type     = "private"
+  os_type             = "Linux"
+  network_profile_id  = azurerm_network_profile.nal-adc-prod-np.id
 
   container {
     name   = "solr"
